@@ -8,7 +8,7 @@ output: html_document
 ## Background ##
 
 Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. 
-These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, my goal was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and predict the manner in which each participant completed the exercise. Each participant was asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, my goal was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and predict the manner in which each participant completed the exercise. Each participant was asked to perform barbell lifts correctly and incorrectly in 5 different ways: A,B,C,D,E. class A indicates performing the exercise correctly and B-E represent various ways of performing them incorrectly.
 
 More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
 
@@ -239,7 +239,7 @@ Finally, I evaluated the accuracy of each model using the test sub-sample and se
         comb_accuracy = round(comb_accuracy, 4)
         
 ```
-The random forest model (`r rf_accuracy`) and stacked model (`r comb_accuracy`) show similar accuracy. Therefore, I selected the random forest model to apply to the validation data.
+The random forest model (`r rf_accuracy`) and stacked model (`r comb_accuracy`) show similar accuracy. Therefore, I selected the random forest model to apply to the validation data. Given the accuracy of the random forest model, I expect the out of sample error rate to be around 1%. 
         
 ```{r step6}        
 #Step 6. Apply the best model to the validation data
