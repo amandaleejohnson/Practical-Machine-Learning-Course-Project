@@ -1,0 +1,248 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Amanda Johnson"
+date: "September 12, 2019"
+output: html_document
+---
+
+## Background ##
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. 
+These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, my goal was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and predict the manner in which each participant completed the exercise. Each participant was asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+## Data ##
+The data for this project come from [here](http://groupware.les.inf.puc-rio.br/har). The training data for this project are available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and the test data are available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv).
+
+My goal was to create a report describing how I built the prediction models, how I used cross-validation, my thoughts on the expected out of sample errors, while justifying each choice I made along the way. Analyses were completed in R and the report was generated using R Markdown and Knitr.
+
+```{r libs, include=FALSE, results="hide"}
+# include = FALSE means this block won't be displayed
+        setwd("C:/Users/ajohns34/Box/Data Science Specialization/Assignment 12")
+
+        options(scipen=999) #Prevents the numbers from being displayed in scientific notation
+        library(ggplot2)
+        library(tidyverse)
+        library(caret)
+        library(kernlab)
+        library(dplyr)
+        library(corrplot)
+        library(RANN)
+        library(rattle)
+        library(parallel)
+        library(doParallel)
+    
+```
+
+### Step 1: Clean the Data ###
+
+Using the validation method, I split the training data into two sub-samples, a training (70%) and a test (30%) set. Then, I used the testing data as the validation data for my final model. I also removed variables that contained missing values, variables that are related to date-stamps and timestamps, and variables that were related to metadata and wouldn't be used for predicting class assignment. After that, I removed any variables that approximate a zero-variance. 
+
+```{r step1} 
+
+    pml = read.csv("./data/pml-training.csv", header=T)
+    
+    #Split the data into training, testing, and validation sets. We will use these sub-samples to evaluate the out-of-sample errors later.
+        intrain = createDataPartition(y=pml$classe, p=0.7, list=FALSE) #Split 70% of data in training and 30% in testing data
+        training = pml[intrain,]
+        testing = pml[-intrain,] #Include all samples that don't appear in the "intrain" dataset
+        validation = read.csv("./data/pml-testing.csv", header=T)
+        
+    #Remove the variables that contain missing values:
+        training = training[, colSums(is.na(training))==0]
+        testing = testing[, colSums(is.na(testing))==0]
+        validation = validation[, colSums(is.na(validation))==0]
+        
+    #The first few columns are related to datestamps and timestamps. We don't need these to predict the model.
+        #We also don't need the new_window column, or the num_window column. 
+        training = training %>% select(-(1:7))
+        testing = testing %>% select(-(1:7))
+        validation = validation %>% select(-(1:7))
+        
+    #ALSO! remove the variables that approximate a zero-variance (i.e., these variables are almost fixed and do not vary)    
+        #Only do this with the training and test data, NOT the validation data!
+        nzv = nearZeroVar(training) #save metrics = shows details
+        training = training[, -nzv]
+        testing = testing[, -nzv]
+```
+
+### Step 2: Preprocessing ###
+
+Next, I investigated the correlations between the remaining variables, excluding the classe variable. I also plotted the correlation matrix with colors to visually present variables that were highly correlated (r>0.75). I subsequently removed these highly correlated variables from the dataset. Thank you to the following site: <http://rismyhammer.com/ml/Pre-Processing.html> for the incredibly helpful documentation on correlation matrices, visuals, and removal of variables with high correlations.
+
+```{r step2}
+    
+    #Investigating correlated predictors
+    corrtable = cor(training[, -53])
+    summary(corrtable[upper.tri(corrtable)]) #Summary table of the min, 25%, median/mean, 75%, and max correlations
+        #Min = -0.99 and max = 0.98!
+    
+    corrplot(corrtable, order="FPC", method="color", type = "upper", tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+    
+    #Given a correlation matrix, findcorrelation flags predictors for removal:
+    highcorrvars = findCorrelation(corrtable, cutoff = 0.75)
+    names(training)[highcorrvars]
+    
+    #Remove the highly correlated variables from the training set only:
+    training = training[, -highcorrvars]
+```
+
+### Step 3: Model Building ###
+
+I ran three separate models: 1.) decision tree, 2.) random forest, and 3.) generalized boosted regression model in the training subset. Then, I validated each model using the testing subset. Each model centers and scales (i.e., standardizes) the predictors before processing. The confusion matrices of each model are presented below, along with  a corresponding plot that displays the accuracy between the training subset and the testing subset.
+
+#### Decision Tree Classification Model ####
+```{r step3ct, echo=FALSE}
+    set.seed(12345)
+
+    #CLASSIFICATION TREE MODEL
+        ctmodel = train(classe ~. , method = "rpart", 
+                        preProcess = c("center", "scale"),
+                        data=training)
+        fancyRpartPlot(ctmodel$finalModel)
+    
+        #Validate model using the testdata:
+        ctpredict = predict(ctmodel, testing)
+        cttree = confusionMatrix(ctpredict, testing$classe)
+        
+        #Confusion Matrix:
+        confusionMatrix(ctpredict, testing$classe)
+        ct_accuracy = confusionMatrix(ctpredict, testing$classe)$overall["Accuracy"]
+        
+        #Plot the accuracy and prediction results:
+        plot(cttree$table, col = cttree$byClass, 
+             main = "Decision Tree Classification Model", 
+             sub = paste("Accuracy = ", round(ct_accuracy, 4)), 
+             xlab = "Predicted Class Assignment", 
+             ylab = "Observed Class Assigment")
+```
+
+#### Random Forest Model ####
+
+For this model, I used parallel processing to increase processing time (see the code in "trainControl()"). Thanks to the following site for the guidance on parallel processing code: <https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md>. To increase precision, I used cross-validation with 5 resampling iterations.
+
+```{r step3rf, echo=FALSE}
+
+    #RANDOM FOREST MODEL
+        #USE PARALLEL PROCESSING TO MAKE THESE RUN FASTER!
+        #Source for parallel processing code: https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+        cluster = makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+        registerDoParallel(cluster)
+        
+        #Configure trainControl object 
+        #number = # of folds for k-fold cross-validation
+        #allowParallel = tells caret to use the cluster that we've registered in the prev step
+        fitcontrol = trainControl(method = "cv", 
+                                  number = 5, 
+                                  allowParallel = TRUE)
+        rfmodel = train(classe ~ ., 
+                method = "rf", data=training, 
+                preProcess = c("center", "scale"),
+                trControl = fitcontrol) #Build a random forest model
+
+        #De-register parallel processing cluster
+        stopCluster(cluster)
+        registerDoSEQ() #required! It forces R to return to single-threaded processing
+        
+        #Validate model using the testdata:
+        rfpredict = predict(rfmodel, testing)
+        rftree = confusionMatrix(rfpredict, testing$classe)
+        
+        #Confusion Matrix:
+        confusionMatrix(rfpredict, testing$classe)
+        rf_accuracy = confusionMatrix(rfpredict, testing$classe)$overall["Accuracy"]
+        
+        #Plot the accuracy and prediction results:
+        plot(rftree$table, col = rftree$byClass, 
+             main = "Random Forest Classification Model", 
+             sub = paste("Accuracy = ", round(rf_accuracy, 4)), 
+             xlab = "Predicted Class Assignment", 
+             ylab = "Observed Class Assigment")
+```
+
+#### Generalized Boosted Regression Model ####
+
+For this model, I used parallel processing to increase processing time (see the code in "trainControl()"). Thanks to the following site for the guidance on parallel processing code: <https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md>. To increase precision, I used repeated cross-validation with five resampling iterations and repeated the process 1 time. 
+
+```{r step3boost, echo=FALSE}
+    
+    #GENERALIZED BOOSTED REGRESSION MODEL
+        #USE PARALLEL PROCESSING TO MAKE THESE RUN FASTER!
+        #Source for parallel processing code: https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+        cluster = makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+        registerDoParallel(cluster)
+        
+        #Configure trainControl object 
+        #number = # of folds for k-fold cross-validation
+        #allowParallel = tells caret to use the cluster that we've registered in the prev step
+        fitcontrol = trainControl(method = "repeatedcv", 
+                                  number = 5, 
+                                  allowParallel = TRUE, 
+                                  repeats = 1)
+        boostmodel = train(classe ~ ., method = "gbm", 
+                           preProcess = c("center", "scale"),
+                           trControl = fitcontrol, data = training)
+        #De-register parallel processing cluster
+        stopCluster(cluster)
+        registerDoSEQ() #required! It forces R to return to single-threaded processing
+        
+        #Validate model using the testdata:
+        boostpredict = predict(boostmodel, testing)
+        boosttree = confusionMatrix(boostpredict, testing$classe)
+        
+        #Confusion Matrix:
+        confusionMatrix(boostpredict, testing$classe)
+        boost_accuracy = confusionMatrix(boostpredict, testing$classe)$overall["Accuracy"]
+        
+        #Plot the accuracy and prediction results:
+        plot(boosttree$table, col = boosttree$byClass, 
+             main = "Random Forest Classification Model", 
+             sub = paste("Accuracy = ", round(boost_accuracy, 4)), 
+             xlab = "Predicted Class Assignment", 
+             ylab = "Observed Class Assigment")
+```        
+
+   
+### Step 4. Ensemble Learning ###       
+    
+After creating three different models, I combined classifiers by "stacking" the predictions together. To do this, I built a new dataframe that consists of predictions from each model and pulled the "classe" variable from the testing dataset. Then, I fit a new model that relates the classe variable to the new prediction variables using the random forest method. 
+```{r step4}
+        #1. 
+        #Build a new dataset that consists of predictions from each model
+        #and create a classe variable that is pulled from the classe variable in the testing dataset
+        preddf = data.frame(ctpredict, rfpredict, boostpredict, classe=testing$classe)
+        
+        #2.     
+        #Fit a new model that relates the classe variable to the two prediction variables
+        #Instead of fitting a model based on the predictors, we are fitting a model based on the predictions!
+        combmodfit = train(classe ~ ., method = "rf", 
+                           preProcess = c("center", "scale"),
+                           data=preddf)
+        combpred = predict(combmodfit, preddf)
+        
+        #Confusion Matrix:
+        confusionMatrix(combpred, testing$classe)
+        comb_accuracy = confusionMatrix(combpred, testing$classe)$overall["Accuracy"]
+```
+
+### Step 5. Evaluate in/out of sample error and accuracy of each model ###
+
+Finally, I evaluated the accuracy of each model using the test sub-sample and selected the model with the highest accuracy.
+
+```{r step5}
+        #What is the resulting accuracy on the test set? 
+        #Is it better or worse than each of the individual predictions? 
+        ct_accuracy = round(ct_accuracy, 4)
+        rf_accuracy = round(rf_accuracy, 4)
+        boost_accuracy = round(boost_accuracy, 4)
+        comb_accuracy = round(comb_accuracy, 4)
+        
+```
+The random forest model (`r rf_accuracy`) and stacked model (`r comb_accuracy`) show similar accuracy. Therefore, I selected the random forest model to apply to the validation data.
+        
+```{r step6}        
+#Step 6. Apply the best model to the validation data
+        results = predict(rfmodel, newdata = validation)
+        #Results are suppressed and will be submitted to the course project quit portion of the assignment.
+```        
