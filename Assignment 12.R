@@ -1,6 +1,6 @@
 ##Assignment 12 - Practical Machine Learning
 
-setwd("C:/Users/ajohns34/Box/Data Science Specialization/Assignment 12")
+setwd() #Masked for Github upload
 
 #Checking for and creating directories
 # file.exists("directoryname") - looks to see if the directory exists - T/F
